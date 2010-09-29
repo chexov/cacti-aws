@@ -1,0 +1,104 @@
+#!/bin/sh
+#  Usage: aws_clodwatch_elb LB-http1 accesskey secretkey Latency
+
+#set -x
+# debug# echo "`date`: $*" >> /tmp/elb_run
+
+[ $# -eq 5 ] || {
+  echo "Usage: $0 <AccessKey> <SecretKey> <Namespace> <Dimensons> <MeasureName> ";
+  echo "Example: $0 AccessKey SecretKey AWS/EBS VolumeId=vol-gc3c7615 VolumeReadBytes";
+  exit 1; }
+
+MON_GET_STATS_CMD=$(type mon-get-stats 2>&1 | awk '{ print $3}')
+[ -x "$MON_GET_STATS_CMD" ] || source /opt/amazon/profile
+
+set -ue
+
+DEBUG="YES"
+EPOCHTIME=$(date "+%s")
+
+START_T=${EPOCHTIME}
+# -180 secs instead of -60 because of CloudWatch's delay in publishing the stats
+END_T=$(expr ${EPOCHTIME} - 900)
+
+#echo "$*" >> /tmp/elb_params
+AWSAccessKeyId=$1
+AWSSecretKey=$2
+NAMESPACE=$3
+DIMENSIONS=$4
+MEASURE_NAME=$5
+
+
+
+case `uname -s` in
+    Linux)
+    # GNU VERSION, Linux machines
+    START_DATETIME=$(date -u --date "1970-01-01 00:00:00 ${START_T} sec" "+%FT%T")
+    END_DATETIME=$(date -u --date "1970-01-01 00:00:00 ${END_T} sec" "+%FT%T")
+    ;;
+    Darwin)
+    # POSIX VERSION, BSD machines
+    START_DATETIME=$(date -u -r ${START_T} "+%FT%T")
+    END_DATETIME=$(date -u -r ${END_T} "+%FT%T")
+    ;;
+    *)
+    echo "Uknown system type: `uaname -s`"
+    exit 1
+esac
+
+
+# --show-request --headers \
+#--end-time ${START_DATETIME} \
+  #--period 60 \
+
+MON_OUT=$(mon-get-stats ${MEASURE_NAME} \
+  -I ${AWSAccessKeyId} \
+  -S ${AWSSecretKey} \
+  --start-time ${END_DATETIME} \
+  --period 300 \
+  --show-long \
+  --dimensions="$DIMENSIONS" \
+  --statistics="Average,Maximum,Minimum,Sum" \
+  --namespace="$NAMESPACE" | tail -1 )
+
+
+[ "$DEBUG" == "YES"  ] && { echo "`date`;dimensions=${DIMENSIONS};measure_name=${MEASURE_NAME};namespace=${NAMESPACE};$MON_OUT" >>/tmp/aws_cloudwatch.out
+
+
+OUT=""
+
+# AWS/RDS
+case ${MEASURE_NAME} in
+   CPUUtilization|DatabaseConnections|FreeStorageSpace)
+   OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3, "minimum:"$5, "maximum:"$6, "sum:"$4 }')
+   #OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3/(1024*2), "minimum:"$5/(1024*2), "maximum:"$6/(1024*2), "sum:"$4/(1024*2) }')
+   ;;
+esac
+
+# AWS/EC2
+case ${MEASURE_NAME} in
+    VolumeWriteBytes|VolumeReadBytes|VolumeReadOps|VolumeWriteOps|VolumeQueueLength|VolumeIdleTime|VolumeTotalReadTime|VolumeTotalWriteTime)
+    #echo ${MON_OUT}
+    # time,samples,average,sum,minimum,maximum,unit
+    OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3, "sum:"$4/300, "minimum:"$5, "maximum:"$6 }')
+    ;;
+esac
+
+# AWS/ELB
+case ${MEASURE_NAME} in
+   Latency)
+   # Multiply by 1000 since values in graphs are in mseconds
+   OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3*1000, "minimum:"$5*1000, "maximum:"$6*1000, "sum:"$4*1000 }')
+   ;;
+   RequestCount)
+   OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2/300, "average:"$3/300, "minimum:"$5/300, "maximum:"$6/300, "sum:"$4/300}')
+   #OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3, "minimum:"$5, "maximum:"$6, "sum:"$4}')
+   ;;
+   UnHealthyHostCount|HealthyHostCount)
+   OUT=$(echo ${MON_OUT} | awk -F, '{ print "samples:"$2, "average:"$3, "minimum:"$5, "maximum:"$6, "sum:"$4 }')
+   ;;
+esac
+
+
+echo -n ${OUT}
+
