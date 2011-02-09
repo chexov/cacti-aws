@@ -62,7 +62,7 @@ MON_OUT=$(mon-get-stats ${MEASURE_NAME} \
   --namespace="$NAMESPACE" | tail -1 )
 
 
-[ "$DEBUG" == "YES"  ] && { echo "`date`;dimensions=${DIMENSIONS};measure_name=${MEASURE_NAME};namespace=${NAMESPACE};$MON_OUT" >>/tmp/aws_cloudwatch.out
+[ "$DEBUG" == "YES"  ] && { echo "`date`;dimensions=${DIMENSIONS};measure_name=${MEASURE_NAME};namespace=${NAMESPACE};$MON_OUT" >>/tmp/aws_cloudwatch.out; }
 
 
 OUT=""
